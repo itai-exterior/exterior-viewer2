@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>外構3Dビューア</title>
+<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: #1a1d21; font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif; }
+  #wrap { display: flex; flex-direction: column; height: 100%; }
+  header {
+    color: #fff; padding: 10px 14px; font-size: 14px;
+    display: flex; justify-content: space-between; align-items: center;
+    background: #24282e;
+  }
+  header .name { font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  header .hint { font-size: 11px; color: #9aa3ad; margin-left: 12px; flex-shrink: 0; }
+  model-viewer { flex: 1; width: 100%; background: linear-gradient(#3a4048, #1a1d21); }
+  #err {
+    color: #ffb0b0; text-align: center; padding: 40px 20px; font-size: 14px; line-height: 1.8;
+  }
+  .progress-bar { display: block; width: 33%; height: 6px; max-width: 300px;
+    margin: 0 auto; border-radius: 3px; background: rgba(255,255,255,0.2); position: absolute;
+    top: 50%; left: 50%; transform: translate(-50%, -50%); overflow: hidden; }
+  .update-bar { background: #6ec6ff; width: 0%; height: 100%; transition: width 0.3s; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <span class="name" id="modelName">読み込み中…</span>
+    <span class="hint">ドラッグ: 回転 / ピンチ: 拡大縮小 / 2本指: 移動</span>
+  </header>
+  <model-viewer id="mv"
+    camera-controls
+    auto-rotate
+    auto-rotate-delay="3000"
+    rotation-per-second="12deg"
+    shadow-intensity="1"
+    exposure="1"
+    interaction-prompt="auto"
+    ar
+    ar-modes="scene-viewer webxr quick-look">
+    <div class="progress-bar" slot="progress-bar"><div class="update-bar"></div></div>
+  </model-viewer>
+</div>
+<script>
+  const params = new URLSearchParams(location.search);
+  let model = params.get("model") || "";
+  const mv = document.getElementById("mv");
+  const nameEl = document.getElementById("modelName");
+
+  // 安全対策: models/ 配下の .glb / .gltf のみ許可(外部URLの読み込みを防止)
+  const ok = /^models\/[^\/\\]+\.(glb|gltf)$/i.test(model);
+
+  if (!ok) {
+    document.getElementById("wrap").innerHTML =
+      '<div id="err">モデルが指定されていません。<br>QRコードから再度アクセスするか、一覧ページ(index.html)からお選びください。</div>';
+  } else {
+    mv.src = model;
+    const base = decodeURIComponent(model.split("/").pop().replace(/\.(glb|gltf)$/i, ""));
+    nameEl.textContent = base;
+    document.title = base + " | 外構3Dビューア";
+    mv.addEventListener("error", () => {
+      nameEl.textContent = "読み込みエラー";
+      mv.outerHTML = '<div id="err">モデルの読み込みに失敗しました。<br>ファイル名・アップロード状況をご確認ください。</div>';
+    });
+  }
+</script>
+</body>
+</html>
