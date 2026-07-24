@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>3D プレビュー</title>
+<script type="module"
+  src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+<style>
+  :root{
+    --ink:#14171a;        /* 背景（深いスレート）*/
+    --ink-2:#1b1f23;
+    --line:#2b3036;
+    --text:#e8e6e1;       /* 温かみのあるオフホワイト */
+    --muted:#8a8f94;
+    --moss:#7c8b6b;       /* 唯一のアクセント（控えめな苔色）*/
+    --danger:#c98a6a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--ink);color:var(--text);
+    font-family:-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",
+      "Yu Gothic UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  model-viewer{width:100%;height:100dvh;--poster-color:transparent;background:
+    radial-gradient(120% 90% at 50% 15%, #20262b 0%, var(--ink) 70%)}
+
+  /* 静かなヘッダー：モデルが主役、UIは邪魔しない */
+  header{position:fixed;top:0;left:0;right:0;z-index:5;
+    display:flex;align-items:center;gap:.6rem;
+    padding:calc(env(safe-area-inset-top) + .9rem) 1.1rem .9rem;
+    pointer-events:none;
+    background:linear-gradient(180deg, rgba(20,23,26,.55), transparent)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--moss);
+    box-shadow:0 0 0 4px rgba(124,139,107,.18)}
+  .brand{font-size:.72rem;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--text);font-weight:600}
+  .brand span{color:var(--muted);font-weight:400}
+
+  /* 状態表示（読み込み・エラー）*/
+  .state{position:fixed;inset:0;z-index:8;display:none;
+    flex-direction:column;align-items:center;justify-content:center;
+    gap:1rem;text-align:center;padding:2rem}
+  .state.show{display:flex}
+  .spin{width:34px;height:34px;border-radius:50%;
+    border:2px solid var(--line);border-top-color:var(--moss);
+    animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .state h1{font-size:1rem;font-weight:600;margin:0}
+  .state p{margin:0;color:var(--muted);font-size:.85rem;max-width:26rem;line-height:1.6}
+  @media (prefers-reduced-motion: reduce){.spin{animation:none}}
+
+  .hint{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 1rem);
+    text-align:center;color:var(--muted);font-size:.72rem;z-index:5;pointer-events:none;
+    opacity:0;transition:opacity .6s .4s}
+  .hint.show{opacity:1}
+  .ar-btn{--moss:#7c8b6b;position:absolute;bottom:1.2rem;right:1.2rem}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="dot"></div>
+  <!-- 事務所名はここを書き換えてください -->
+  <div class="brand">ITAI EXTERIOR <span>／ 3D PREVIEW</span></div>
+</header>
+
+<!-- 読み込み状態 -->
+<div class="state show" id="loading">
+  <div class="spin"></div>
+  <div>
+    <h1>モデルを準備しています</h1>
+    <p>この端末の中でデータを復号しています。しばらくお待ちください。</p>
+  </div>
+</div>
+
+<!-- エラー状態 -->
+<div class="state" id="error">
+  <div>
+    <h1 id="err-title">表示できませんでした</h1>
+    <p id="err-msg"></p>
+  </div>
+</div>
+
+<div class="hint" id="hint">ドラッグで回転・ピンチで拡大／右下のボタンでAR表示</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const loading = $("#loading"), errBox = $("#error");
+
+function fail(title, msg){
+  loading.classList.remove("show");
+  $("#err-title").textContent = title;
+  $("#err-msg").textContent = msg;
+  errBox.classList.add("show");
+}
+
+// base64url → Uint8Array
+function b64urlToBytes(s){
+  s = s.replace(/-/g,"+").replace(/_/g,"/");
+  while(s.length % 4) s += "=";
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function main(){
+  const params = new URLSearchParams(location.search);
+  const modelFile = params.get("m");
+  const keyStr = new URLSearchParams(location.hash.slice(1)).get("k");
+
+  if(!modelFile)  return fail("リンクが不完全です","表示するモデルが指定されていません。共有された正しいURLから開き直してください。");
+  if(!keyStr)     return fail("鍵が見つかりません","このリンクには表示用の鍵が含まれていません。配布されたQRまたはURLをそのままお使いください。");
+
+  let buf;
+  try{
+    const res = await fetch(modelFile, {cache:"no-store"});
+    if(!res.ok) throw new Error("http "+res.status);
+    buf = await res.arrayBuffer();
+  }catch(e){
+    return fail("モデルが見つかりません","データを取得できませんでした。時間をおいて再度お試しください。");
+  }
+
+  try{
+    const raw = new Uint8Array(buf);
+    const iv  = raw.slice(0, 12);
+    const ct  = raw.slice(12);
+    const key = await crypto.subtle.importKey(
+      "raw", b64urlToBytes(keyStr), {name:"AES-GCM"}, false, ["decrypt"]);
+    const plain = await crypto.subtle.decrypt({name:"AES-GCM", iv}, key, ct);
+
+    const blob = new Blob([plain], {type:"model/gltf-binary"});
+    const url  = URL.createObjectURL(blob);
+
+    const mv = document.createElement("model-viewer");
+    mv.setAttribute("camera-controls","");
+    mv.setAttribute("auto-rotate","");
+    mv.setAttribute("auto-rotate-delay","4000");
+    mv.setAttribute("rotation-per-second","12deg");
+    mv.setAttribute("interaction-prompt","none");
+    mv.setAttribute("shadow-intensity","0.9");
+    mv.setAttribute("exposure","1.0");
+    mv.setAttribute("ar","");
+    mv.setAttribute("ar-modes","webxr scene-viewer quick-look");
+    mv.setAttribute("touch-action","pan-y");
+    mv.src = url;
+
+    const arBtn = document.createElement("button");
+    arBtn.className = "ar-btn"; arBtn.slot = "ar-button";
+    arBtn.textContent = "AR で見る";
+    arBtn.style.cssText =
+      "padding:.6rem 1rem;border:1px solid var(--line);border-radius:999px;"+
+      "background:rgba(27,31,35,.85);color:var(--text);font-size:.8rem;"+
+      "backdrop-filter:blur(6px)";
+    mv.appendChild(arBtn);
+
+    mv.addEventListener("load", ()=>{
+      loading.classList.remove("show");
+      $("#hint").classList.add("show");
+      setTimeout(()=>$("#hint").classList.remove("show"), 5000);
+    });
+    mv.addEventListener("error", ()=>fail("モデルを表示できません","3Dデータの読み込みに失敗しました。ファイルが破損している可能性があります。"));
+
+    document.body.insertBefore(mv, document.body.firstChild);
+  }catch(e){
+    return fail("鍵が一致しません","このリンクの鍵ではデータを開けませんでした。最新のQRまたはURLをご確認ください。");
+  }
+}
+main();
+</script>
+</body>
+</html>
